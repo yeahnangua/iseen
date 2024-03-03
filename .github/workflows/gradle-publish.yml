@@ -10,8 +10,8 @@ jobs:
     - name: Set up JDK 17
       uses: actions/setup-java@v3 # 更新到最新版本
       with:
-        java-version: '11'
-        distribution: 'adopt'
+        java-version: '17'
+        distribution: 'temurin'
     - name: Grant execute permission for gradlew
       run: chmod +x ./gradlew
     - name: Build debug APK
