@@ -1,13 +1,13 @@
 package com.cwuom.iseen.Adapter;
 
 import static android.content.Context.MODE_PRIVATE;
-import static androidx.core.content.ContextCompat.getString;
 import static com.cwuom.iseen.Util.UtilMethod.showDialog;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -16,34 +16,27 @@ import android.widget.Button;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
-import androidx.appcompat.widget.PopupMenu;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.cwuom.iseen.Dao.CardDao;
+import com.cwuom.iseen.Dao.UserDao;
 import com.cwuom.iseen.Entity.EntityCard;
 import com.cwuom.iseen.Entity.EntityCardHistory;
 import com.cwuom.iseen.InitDataBase.InitCardDataBase;
+import com.cwuom.iseen.InitDataBase.InitUserDataBase;
 import com.cwuom.iseen.R;
+import com.cwuom.iseen.Util.API.Ark.ArkAPIReq;
+import com.cwuom.iseen.Util.API.Ark.ArkApiCallback;
 import com.cwuom.iseen.Util.UtilMethod;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.kongzue.dialogx.dialogs.BottomMenu;
 import com.kongzue.dialogx.interfaces.BaseDialog;
 import com.kongzue.dialogx.interfaces.OnIconChangeCallBack;
-import com.kongzue.dialogx.interfaces.OnMenuItemClickListener;
-
-import org.jetbrains.annotations.NotNull;
-
-import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
 import java.util.ArrayList;
-import java.util.Objects;
 
-import okhttp3.Call;
-import okhttp3.Callback;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
+import io.noties.markwon.Markwon;
 
 /*
  * This software is provided for educational purposes only and should not be used for commercial or illegal activities.
@@ -78,11 +71,13 @@ public class CardHistoryAdapter extends RecyclerView.Adapter<CardHistoryAdapter.
     final Handler handler = new Handler();
 
     InitCardDataBase initCardDataBase;
+    InitUserDataBase initUserDataBase;
     CardDao cardDao;
     CountListen countListen;
     ActionListen actionListen;
     SharedPreferences sharedPreferences;
     SharedPreferences.Editor editor;
+    UserDao userDao;
 
     public CardHistoryAdapter(ArrayList<EntityCardHistory> list, Context context, CountListen countListen, ActionListen actionListen) {
         this.list = list;
@@ -104,11 +99,16 @@ public class CardHistoryAdapter extends RecyclerView.Adapter<CardHistoryAdapter.
     public void onBindViewHolder(@NonNull CardHistoryAdapter.ViewHolder holder, @SuppressLint("RecyclerView") int position) {
         sharedPreferences = context.getSharedPreferences("config", MODE_PRIVATE);
         editor = sharedPreferences.edit();
+        initUserDataBase = UtilMethod.getInstance_user(context.getApplicationContext());
+
+        userDao = initUserDataBase.userDao();
+
         if (position == holder.getLayoutPosition()){
             holder.tv_card_head_title.setText(list.get(position).getCardHeadTitle());
             holder.tv_card_head_sub.setText(list.get(position).getCardHeadSubtitle());
             holder.tv_card_content_title.setText(list.get(position).getCardNote());
-            holder.tv_card_content_callback.setText(list.get(position).getCardContentCallback());
+            final Markwon markwon = Markwon.create(context);
+            markwon.setMarkdown(holder.tv_card_content_callback, list.get(position).getCardContentCallback());
             holder.tv_card_create_time.setText(list.get(position).getCardCreateTime());
 
             holder.delete.setOnClickListener(v -> new MaterialAlertDialogBuilder(v.getContext())
@@ -156,18 +156,6 @@ public class CardHistoryAdapter extends RecyclerView.Adapter<CardHistoryAdapter.
                 public boolean onLongClick(View v) {
                     int pos = holder.getLayoutPosition();
                     EntityCard entityCard = cardDao.getCardByID(list.get(pos).getHistoryCardId());
-//                    PopupMenu popupMenu = new PopupMenu(context, v);
-//                    popupMenu.getMenuInflater().inflate(R.menu.bg_setting_menu, popupMenu.getMenu());
-//                    popupMenu.setOnMenuItemClickListener(item -> {
-//                        int id = item.getItemId();
-//                        if (id == R.id.item_use_default_background){
-//                        }
-//                        if (id == R.id.item_choose_background){
-//
-//                        }
-//                        return false;
-//                    });
-//                    popupMenu.show();
                     BottomMenu.show(new String[]{"复制全部内容", "解析内容(复制部分内容)"})
                             .setOnIconChangeCallBack(new OnIconChangeCallBack(true) {
                                 @Override
@@ -194,38 +182,34 @@ public class CardHistoryAdapter extends RecyclerView.Adapter<CardHistoryAdapter.
     @SuppressLint("RestrictedApi")
     private void refreshCard() {
         EntityCard entityCard = cardDao.getCardByID(list.get(refreshPos).getHistoryCardId());
-//        new MaterialAlertDialogBuilder(context)
-//                .setTitle("正在等待响应！")
-//                .setMessage("请不要重复点击，耐心等待回调。")
-//                .setPositiveButton("好", null)
-//                .show();
-//        AlertDialog dialog = showDialog("正在等待响应！", "请不要重复点击，耐心等待回调。当服务器响应时，此窗口会自动关闭！", context);
 
-        OkHttpClient client = new OkHttpClient();
-        Request request = new Request.Builder()
-                .url(entityCard.getCardListenerUrl())
-                .build();
-        Call call = client.newCall(request);
+        ArkAPIReq.retrieveArkListenerData(
+                entityCard.getCardListenerUrl(),
+                context.getApplicationContext(),
+                true,
+                new ArkApiCallback() {
+                    @Override
+                    public void onSuccess(String result) {
+                        Log.e("OkHttp GET请求成功", result);
+                        actionListen.actionListen(-2, null, null, 0);
+                        changeItemCallback(result);
+                    }
 
+                    @Override
+                    public void onFailure(Exception e) {
+                        new Handler(Looper.getMainLooper()).post(() -> {
+                            if (e instanceof SocketTimeoutException) {
+                                showDialog("请求超时！", "无法与服务器建立连接，请检查网络后重试！", context);
+                            } else if (e instanceof ConnectException) {
+                                showDialog("请求连接异常！", "无法正确读取通讯数据，请检查网络后重试！", context);
+                            } else {
+                                showDialog("请求错误！", e.getMessage(), context);
+                            }
+                        });
+                    }
+                }
+        );
         actionListen.actionListen(-1, null, null, 0);
-        call.enqueue(new Callback() {
-            @Override
-            public void onFailure(@NotNull Call call, @NotNull IOException e) {
-                if (e instanceof SocketTimeoutException){
-                    showDialog("请求超时！", "无法与服务器建立连接，请检查网络后重试！", context);
-                }
-                if (e instanceof ConnectException){
-                    showDialog("请求连接异常！", "无法正确读取通讯数据，请检查网络后重试！", context);
-                }
-            }
-            @Override
-            public void onResponse(@NotNull Call call, @NotNull Response response) throws IOException {
-                String res = Objects.requireNonNull(response.body()).string();
-                Log.e("OkHttp GET请求成功", "onFailure: "+res);
-                actionListen.actionListen(-2, null, null, 0);
-                changeItemCallback(res);
-            }
-        });
     }
 
     void changeItemCallback(String res){
